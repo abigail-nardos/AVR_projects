@@ -1,0 +1,145 @@
+/*
+ * Assignment4.c
+ *
+ * Created: 7/24/2023 11:10:30 AM
+ * Author : akievit
+ */ 
+
+/*
+ *  if (adc_key > 1000 )   return btnNONE;
+ *  if (adc_key_in < 50)   return btnRIGHT;
+ *  if (adc_key_in < 195)  return btnUP;
+ *  if (adc_key_in < 380)  return btnDOWN;
+ *  if (adc_key_in < 555)  return btnLEFT;
+ *  if (adc_key_in < 790)  return btnSELECT;
+ */
+
+#include <avr/io.h>
+#include <stdbool.h>
+#include <avr/interrupt.h>
+#include "lcd_drv.h"
+#include "main.h"
+
+//INITIALIZE
+int L1_SUB_SECOND = 0;
+int L1_SECOND = 0;
+int L1_MINUTE = 0;
+int L1_HOUR = 0;
+
+int SUB_SECOND = 0;
+int SECOND = 0;
+int MINUTE = 0;
+int HOUR = 0;
+
+int PAUSED = 0; //0 = false, 1 = true
+void display_lcd(void);
+
+//INTERRUPT SERVICE ROUTINE
+// timer0 overflow
+ISR(TIMER0_OVF_vect)
+{
+	//INCREMENT
+	SUB_SECOND++;
+	if (SUB_SECOND == 100)
+	{
+		SUB_SECOND = 0;
+		SECOND++;
+		if (SECOND == 60)
+		{
+			SECOND = 0;
+			MINUTE++;
+			if (MINUTE == 60) 
+			{
+				MINUTE = 0;
+				HOUR++;
+				if (HOUR == 60) {
+					HOUR = 0; //starts over if LCD gets to 60 hours
+				}
+			}
+		}
+	}
+	display_lcd();
+	//redisplay every time isr is called
+
+}
+
+void display_lcd(void)
+{
+	//if paused is true L1 values are not updated
+	if (PAUSED == 0) //not paused, so update LINE 1 to LINE 2
+	{
+		L1_SUB_SECOND = SUB_SECOND;
+		L1_SECOND = SECOND;
+		L1_MINUTE = MINUTE;
+		L1_HOUR = HOUR;
+	}
+	//DISPLAYING LINE1
+	lcd_xy(0,0);
+	char counter1[11];
+	sprintf(counter1, "%.2d:%.2d:%.2d.%.2d",L1_HOUR,L1_MINUTE,L1_SECOND,L1_SUB_SECOND);
+	
+	lcd_puts(counter1);
+	
+	//DISPLAYING LINE2
+	lcd_xy(0,1);
+	
+	char counter2[11];
+	sprintf(counter2, "%.2d:%.2d:%.2d.%.2d",HOUR,MINUTE,SECOND,SUB_SECOND);
+	
+	lcd_puts(counter2);
+}
+
+
+int main(void) {
+	//initialize LCD
+	lcd_init();
+	
+	//TIMER CODE
+	// enable timer overflow interrupt for Timer0
+	TIMSK0 |=(1<<TOIE0);
+	
+	// set timer0 counter initial value to 0
+	TCNT0=0x00;
+
+	// start timer0 with /1024 prescaler. Timer clock = system clock/1024
+	TCCR0B = (1<<CS02) | (1<<CS00);
+	
+	// enable interrupts
+	sei();
+	
+	
+	//BUTTON CODE
+	unsigned int count = 0;
+	
+    ADCSRA = 0x87;
+	ADMUX = 0x40;
+	
+	while (true) {
+		
+		// start conversion
+		ADCSRA |= 0x40;
+
+		while (ADCSRA & 0x40)
+			;
+		unsigned int val = ADCL;
+		unsigned int val2 = ADCH;
+
+		val += (val2 << 8);
+		count = count + 1;
+	
+		if (val < 1000 ) {
+			//any button pressed
+			//if LINE 1 paused, unpause
+			//if LINE 1 unpaused, pause
+			if (PAUSED == 0) {
+				PAUSED = 1;
+			} 
+			else {
+				PAUSED = 0;
+			}
+			}
+		}
+		return 1;
+	}
+
+

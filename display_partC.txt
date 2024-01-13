@@ -1,0 +1,499 @@
+/*
+ * display_partC.asm
+ *
+ *  Created: 6/30/2023 3:56:42 PM
+ *   Author: akievit
+ */ 
+ ;extend part B so the message scrolls left if left button is pushed
+ ;scrolls right if right button is pushed
+ ;other buttons are ignored
+
+  .cseg
+.org 0 ;reset
+	jmp start
+
+.org 0x22 ;compare match A interrupt TIMER1
+	jmp timer1 ;interrupt service routine
+
+.org 0x40 ;compare match A interrupt TIMER3
+	jmp timer2
+
+.include "lcd.asm"
+
+
+.cseg
+
+.def HIGH_B=r1 
+.def LOW_B=r0
+
+start:
+	;First Initilize built-in Analog to Digital Converter
+	; initialize the Analog to Digital converter
+	ldi r16, 0x87
+	sts ADCSRA, r16
+	ldi r16, 0x40
+	sts ADMUX, r16
+
+	rcall lcd_init
+	rcall init_strings
+	
+	;INITIALIZING TIMER1, code from lab7/lab8
+	;initializing the TOP value
+	ldi r17, high(15625)
+	ldi r16, low(15625)
+	sts OCR1AH, r17
+	sts OCR1AL, r16
+	
+
+	;configuring timer1
+	ldi r16, 0
+	sts TCCR1A, r16
+
+	ldi r16, (1 << WGM12) | (1 << CS12) | (1 << CS10)
+	sts TCCR1B, r16
+
+	ldi r16, (1 << OCIE1A)
+	sts TIMSK1, r16
+
+
+	;INITIALIZING TIMER3, code from lab7/lab8
+	;initializing the TOP value
+	ldi r17, high(15625)
+	ldi r16, low(15625)
+	sts OCR3AH, r17
+	sts OCR3AL, r16
+	
+
+	;configuring timer3
+	ldi r16, 0
+	sts TCCR3A, r16
+
+	ldi r16, (1 << WGM32) | (1 << CS32) | (1 << CS30)
+	sts TCCR3B, r16
+
+	ldi r16, (1 << OCIE3A)
+	sts TIMSK3, r16
+	sei
+	clr r10
+	clr r7
+
+	clr r11
+	.def c1 = r11
+
+
+	msg1_length: ;m1 will contain the length of msg1 
+		.def m1 = r8
+
+		push ZH
+		push ZL
+		push r16
+		ldi r16, high(msg1_p<<1) ;load the high byte value of msg1 into r16
+		mov ZH,r16
+		ldi r16, low(msg1_p<<1) ;load the low byte value of msg1 into r16
+		mov ZL,r16
+		m1_counter:
+			lpm r16,Z+
+			tst r16 ;test if r16 has reached the null terminator, increases m1 otherwise
+			brne inc_m1
+			pop r16
+			pop ZL
+			pop ZH
+			rjmp msg2_length
+		inc_m1:
+			inc m1
+			rjmp m1_counter
+
+	msg2_length: ;m2 will contain the length of msg2
+		.def m2 = r9
+
+		push ZH
+		push ZL
+		push r16
+		ldi r16, high(msg2_p<<1) ;load the high byte value of msg2 into r16
+		mov ZH, r16
+		ldi r16, low(msg2_p<<1) ;load the low byte value of msg2 into r16
+		mov ZL, r16
+
+		m2_counter:
+			lpm r16, Z+
+			tst r16 ;test if r16 has reached the null terminator, increases m2 otherwise
+			brne inc_m2
+			pop r16
+			pop ZL
+			pop ZH
+			rjmp output_both
+		inc_m2:
+			inc m2
+			rjmp m2_counter
+
+	;output msg1 and msg2 to LCD
+	output_both:
+	push r16
+
+	call lcd_clr
+
+	ldi r16, 0x00
+	push r16
+	and r16,r21
+	push r16
+	call lcd_gotoxy
+	pop r16
+	pop r16
+
+	; Now display msg1 on the first line
+	ldi r16, high(msg1)
+	push r16
+	ldi r16, low(msg1)
+	add r16,r10
+	push r16
+	call lcd_puts
+	pop r16
+	pop r16
+
+	; Now move the cursor to the second line
+	ldi r16, 0x01
+	push r16
+	and r16,r21
+	push r16
+	call lcd_gotoxy
+	pop r16
+	pop r16
+
+	; Now display msg1 on the second line
+	ldi r16, high(msg2)
+	push r16
+	ldi r16, low(msg2)
+	add r16,r7
+	push r16
+	call lcd_puts
+	pop r16
+	pop r16
+
+	pop r16
+
+	waiting:
+		;waiting for interrupt to be called
+		call check_button
+		cpi r19, 1
+		breq is_1 ;r19 is not 0, interrupt was called
+		rjmp waiting
+
+
+		is_1:
+			;interrupt was called
+			clr r19
+			cpi r18, 0
+			breq output_both ;r18 is 0
+			cpi r18,1
+			breq output_top
+			rcall output_bottom ;r18 is 2
+			rjmp waiting
+
+			output_top:
+				rcall output_1
+				rjmp waiting
+
+			output_bottom:
+				rcall output_2
+
+		rjmp waiting
+		
+
+timer1: ;this function is TESTED and CORRECT
+	;change the flag in r18 between 1 and 0 
+	;r19 changes between 0 and 1 - 1 means interrupt was called
+	push r16
+	lds r16,SREG
+	push r16
+	ldi r19, 1 ;indicates interrupt1 was called
+
+	cpi r18, 0
+	breq change_to_1
+	cpi r18, 1
+	breq change_to_2
+	cpi r18,2
+	breq change_to_0
+
+	change_to_1:
+		ldi r18, 1
+		rjmp continue
+	change_to_2:
+		ldi r18,2
+		rjmp continue
+	change_to_0:
+		ldi r18,0
+	
+	continue:
+
+	pop r16
+	sts SREG,r16
+	pop r16
+
+	reti
+
+timer2: ;RIGHT button works, LEFT button doesn't always work, UP button acts as RIGHT button
+	push r16
+	lds r16,SREG
+	push r16
+	push r21
+	
+	call check_button
+	;check if left button is pushed, then scroll to the left
+	;check if right button is pushed, then scroll to the right
+	cpi r24, 1 ;r24 = 1, right clicked, r24 = 2, left clicked
+	breq scroll_right
+
+	cpi r24, 2
+	breq scroll_left
+
+	isr2_end:
+
+	pop r21
+	pop r16
+	sts SREG,r16
+	pop r16
+
+	reti
+
+scroll_right: ;tested and works
+	mov r21,r10
+	cpi r21,0
+	breq update_r10
+	rjmp dec_r10
+
+	update_r10:
+		mov r10,m1
+	dec_r10:
+		dec r10
+
+	check_r7:
+	mov r21,r7
+	cpi r21,0
+	breq update_r7
+	rjmp dec_r7
+
+	update_r7:
+		mov r7,m2
+	dec_r7:
+		dec r7
+
+	rjmp isr2_end
+	
+
+scroll_left: ;tested and works
+	inc r10
+	inc r7
+	cp r10,m1
+	breq clr_1
+	rjmp check_2
+
+	clr_1: ;if r10 = msg1 length, clear r10
+		clr r10
+
+	check_2:
+
+	cp r7,m2
+	breq clr_2
+	rjmp isr2_end
+
+	clr_2:
+		clr r7
+
+	rjmp isr2_end
+
+; value > 0x3E8 - no button pressed
+; Otherwise:
+; value < 0x032 - right button pressed
+; value < 0x0C3 - up button pressed
+; value < 0x17C - down button pressed
+; value < 0x22B - left button pressed
+; value < 0x316 - select button pressed
+
+
+;ADCSRA = 0x87
+check_button: ;CODE UPDATED FROM button.asm
+	push r16
+	push r17
+	;r24 = 0: right, r24 = 1, left
+	; start a2d conversion
+	lds	r16, ADCSRA	  ; get the current value of SDRA
+	ori r16, 0x40     ; set the ADSC bit to 1 to initiate conversion
+	sts	ADCSRA, r16
+
+	; wait for A2D conversion to complete
+	wait:
+	lds r16, ADCSRA
+	andi r16, 0x40     ; see if conversion is over by checking ADSC bit
+	brne wait          ; ADSC will be reset to 0 is finished
+
+	; read the value avialble as 10 bits in ADCH:ADCL
+	lds r16, ADCL
+	lds r17, ADCH
+
+	;if value > 0x3E8, ldi r24,0 
+	;if value < 0x032, ldi r24,1
+	;if 0x17C <= value < 0x22B, ldi r24,1
+	
+	cpi r17, 0
+	breq check_right
+	rjmp check_left
+
+	;value < 0x032
+	check_right:
+		cpi r16,0x32
+		brlo update_right
+		rjmp check_left
+
+	update_right:
+		ldi r24,1
+	
+	;0x17C <= value < 0x22b
+	check_left: ;checking upper bound
+		cpi r17,0x2
+		breq check_left2 ;if r17 = 0x2, r16
+		brlo check_left3 ;if r17 < 0x2, check other bound
+		rjmp skip		 ;if r17 > 0x2, button != left
+	
+	check_left2: ;r17 = 0x2
+		cpi r16,0x2B
+		brlo check_left3 ;check other bound
+		rjmp skip
+
+	check_left3: ;now check if 0x17C <= value
+		cpi r17, 0x1
+		breq check_left4
+		brge update_left
+		rjmp skip
+
+	check_left4:
+		cpi r16, 0x7C 
+		brge update_left
+		rjmp check_none
+
+	update_left:
+		ldi r24,2
+		rjmp check_none
+
+	check_none: ;0x3E8
+		cpi r17, 0x3
+		breq check_none2
+		brge update_none
+		rjmp skip
+
+	check_none2:
+		cpi r16, 0xE8
+		breq skip
+		brge update_none
+		rjmp skip
+
+	update_none:
+		ldi r24,0
+
+	skip:
+	pop r17
+	pop r16
+	ret 
+
+output_1: ;CODE MODIFIED FROM lcd_example
+;output "Nadya Kievit" to top of LCD
+	push r16
+
+	call lcd_clr
+
+	ldi r16, 0x00
+	push r16
+	and r16, r21
+	push r16
+	call lcd_gotoxy
+	pop r16
+	pop r16
+
+	; Now display msg1 on the first line
+	ldi r16, high(msg1)
+	push r16
+	ldi r16, low(msg1)
+	add r16,r10
+	push r16
+	call lcd_puts
+	pop r16
+	pop r16
+
+	pop r16
+
+	ret
+
+output_2: ;CODE MODIFIED FROM lcd_example
+;output "CSC 230: Summer 2023" to bottom of LCD
+	push r16 
+
+	call lcd_clr
+	
+	ldi r16, 0x01
+	push r16
+	and r16, r21
+	push r16
+	call lcd_gotoxy
+	pop r16
+	pop r16
+
+	; Now display msg1 on the second line
+	ldi r16, high(msg2)
+	push r16
+	ldi r16, low(msg2)
+	add r16,r7
+	push r16
+	call lcd_puts
+	pop r16
+	pop r16
+
+	pop r16
+
+	ret
+
+
+init_strings: ;CODE FROM lcd_example
+	push r16
+	; copy strings from program memory to data memory
+	ldi r16, high(msg1)		; this the destination
+	push r16
+	ldi r16, low(msg1)
+	push r16
+	ldi r16, high(msg1_p << 1) ; this is the source
+	push r16
+	ldi r16, low(msg1_p << 1)
+	push r16
+	call str_init			; copy from program to data
+	pop r16					; remove the parameters from the stack
+	pop r16
+	pop r16
+	pop r16
+
+	ldi r16, high(msg2)
+	push r16
+	ldi r16, low(msg2)
+	push r16
+	ldi r16, high(msg2_p << 1)
+	push r16
+	ldi r16, low(msg2_p << 1)
+	push r16
+	call str_init
+	pop r16
+	pop r16
+	pop r16
+	pop r16
+
+	pop r16
+	ret
+
+
+msg1_p:	.db "Nadya Kievit", 0
+msg2_p: .db "CSC 230: Summer 2023", 0
+
+.dseg
+;
+; The program copies the strings from program memory
+; into data memory.  These are the strings
+; that are actually displayed on the lcd
+;
+msg1:	.byte 200
+msg2:	.byte 200
